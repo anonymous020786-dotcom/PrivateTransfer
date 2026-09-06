@@ -1,0 +1,20 @@
+# Caddy reverse proxy with automatic Let's Encrypt TLS for Zync on Oracle.
+# Replace the domains with yours. Caddy obtains/renews certificates itself.
+
+# Main app (Next.js on :3000)
+zync.example.com {
+	encode gzip zstd
+	reverse_proxy localhost:3000
+}
+
+# Self-hosted PeerJS signaling (bin/peerjs.js on :9000)
+peer.example.com {
+	reverse_proxy localhost:9000
+}
+
+# TURN TLS host — Caddy just manages the cert; coturn uses it directly.
+# Point turn.example.com's A record at the VM, then reference the cert path in
+# turnserver.conf. (Alternatively use certbot for this hostname.)
+turn.example.com {
+	respond "Zync TURN" 200
+}

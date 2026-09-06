@@ -1,0 +1,53 @@
+# DigitalOcean App Platform spec — deploy Zync (app + PeerJS).
+# Use: DO console -> Apps -> Create App -> import this repo, or
+#   doctl apps create --spec .do/app.yaml
+name: zync
+region: nyc
+services:
+  # Main Next.js app (built from the repo Dockerfile)
+  - name: web
+    dockerfile_path: Dockerfile
+    github:
+      repo: zestcommerce841428-png/zync
+      branch: main
+      deploy_on_push: true
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    http_port: 3000
+    routes:
+      - path: /
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SITE_URL
+        scope: RUN_TIME
+        value: ${APP_URL}
+      - key: FILEPIZZA_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: CHANGE_ME_64_HEX
+      - key: PEERJS_HOST
+        scope: RUN_TIME
+        value: ${peerjs.PUBLIC_DOMAIN}
+      - key: PEERJS_PATH
+        scope: RUN_TIME
+        value: /peerjs/filepizza
+      # Free public TURN/STUN is on by default — no keys required.
+      # Add REDIS_URL / Supabase / SMTP here to unlock scaling, auth, email.
+
+  # Self-hosted PeerJS signaling server (bin/peerjs.js, binds to $PORT)
+  - name: peerjs
+    github:
+      repo: zestcommerce841428-png/zync
+      branch: main
+      deploy_on_push: true
+    build_command: corepack enable && pnpm install --prod=false
+    run_command: node bin/peerjs.js
+    instance_size_slug: basic-xxs
+    instance_count: 1
+    http_port: 9000
+    routes:
+      - path: /peerjs
+    envs:
+      - key: NODE_VERSION
+        value: "22"

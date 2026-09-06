@@ -1,0 +1,99 @@
+# Production stack for a single VPS using NGINX as the web server / reverse
+# proxy with automatic Let's Encrypt HTTPS (nginx-proxy + acme-companion).
+# Same app, but Nginx instead of Caddy. One domain:
+#   https://<SITE_DOMAIN>            -> Next.js app (:3000)
+#   https://<SITE_DOMAIN>/peerjs/*   -> self-hosted PeerJS signaling (:9000)
+#
+# Usage (from repo root on the VPS):
+#   cp deploy/vps/.env.example deploy/vps/.env   # then edit it
+#   docker compose --env-file deploy/vps/.env -f deploy/vps/docker-compose.nginx.yml up -d --build
+
+name: zync
+
+services:
+  # NGINX reverse proxy — auto-generates vhosts from container env vars.
+  nginx-proxy:
+    image: nginxproxy/nginx-proxy:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - certs:/etc/nginx/certs
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - ./nginx/app.conf:/etc/nginx/conf.d/zync-extra.conf:ro
+    networks: [zync]
+
+  # Issues + renews Let's Encrypt certificates for nginx-proxy automatically.
+  acme:
+    image: nginxproxy/acme-companion:latest
+    restart: unless-stopped
+    environment:
+      - DEFAULT_EMAIL=${SMTP_FROM:-admin@${SITE_DOMAIN}}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - certs:/etc/nginx/certs
+      - vhost:/etc/nginx/vhost.d
+      - html:/usr/share/nginx/html
+      - acme:/etc/acme.sh
+    depends_on: [nginx-proxy]
+    networks: [zync]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [zync]
+
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
+        NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${NEXT_PUBLIC_RECAPTCHA_SITE_KEY:-}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      # nginx-proxy routing (host + path) + TLS host
+      - VIRTUAL_HOST=${SITE_DOMAIN}
+      - VIRTUAL_PATH=/
+      - VIRTUAL_PORT=3000
+      - LETSENCRYPT_HOST=${SITE_DOMAIN}
+    depends_on: [redis]
+    networks: [zync]
+
+  peerjs:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.peerjs
+    restart: unless-stopped
+    environment:
+      - PORT=9000
+      # Same host, the /peerjs path -> this container
+      - VIRTUAL_HOST=${SITE_DOMAIN}
+      - VIRTUAL_PATH=/peerjs/
+      - VIRTUAL_DEST=/peerjs/
+      - VIRTUAL_PORT=9000
+      - LETSENCRYPT_HOST=${SITE_DOMAIN}
+    networks: [zync]
+
+networks:
+  zync:
+    driver: bridge
+
+volumes:
+  redis_data:
+  certs:
+  vhost:
+  html:
+  acme:

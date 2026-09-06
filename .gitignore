@@ -1,0 +1,8 @@
+.DS_Store
+.next
+node_modules
+dist
+tsconfig.tsbuildinfo
+.env
+# Recreated by newer pnpm locally; approvals live in package.json (pnpm.onlyBuiltDependencies)
+pnpm-workspace.yaml

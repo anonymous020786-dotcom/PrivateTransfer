@@ -1,0 +1,43 @@
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - 6379:6379
+    networks:
+      - filepizza
+    volumes:
+      - redis_data:/data
+  coturn:
+    image: coturn/coturn
+    ports:
+      - 3478:3478
+      - 3478:3478/udp
+      - 5349:5349
+      - 5349:5349/udp
+      # Relay Ports
+      # - 49152-65535:49152-65535/udp
+    environment:
+      - DETECT_EXTERNAL_IP=yes
+      - DETECT_RELAY_IP=yes
+    command: -n --log-file=stdout --redis-userdb="ip=redis connect_timeout=30"
+    networks:
+      - filepizza
+  filepizza:
+    build: .
+    image: kern/filepizza:latest
+    ports:
+      - 8080:8080
+    environment:
+      - PORT=8080
+      - REDIS_URL=redis://redis:6379
+    networks:
+      - filepizza
+    depends_on:
+      - redis
+
+networks:
+  filepizza:
+    driver: bridge
+
+volumes:
+  redis_data:

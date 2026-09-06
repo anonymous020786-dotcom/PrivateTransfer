@@ -1,0 +1,83 @@
+# Production stack for a single VPS (e.g. Hostinger KVM, Ubuntu + Docker).
+# Serves the whole app on ONE domain with automatic HTTPS via Caddy:
+#   https://<SITE_DOMAIN>            -> Next.js app (:3000)
+#   https://<SITE_DOMAIN>/peerjs/*   -> self-hosted PeerJS signaling (:9000)
+# Free public TURN/STUN is on by default, so no separate TURN box is required.
+#
+# Usage (from repo root on the VPS):
+#   cp deploy/vps/.env.example deploy/vps/.env   # then edit it
+#   docker compose --env-file deploy/vps/.env -f deploy/vps/docker-compose.yml up -d --build
+
+name: zync
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [zync]
+
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* must be baked at build time (inlined into client bundle)
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
+        NEXT_PUBLIC_RECAPTCHA_SITE_KEY: ${NEXT_PUBLIC_RECAPTCHA_SITE_KEY:-}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+    depends_on: [redis]
+    networks: [zync]
+
+  peerjs:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile.peerjs
+    restart: unless-stopped
+    environment:
+      - PORT=9000
+    networks: [zync]
+
+  cron:
+    image: alpine:3.19
+    restart: unless-stopped
+    environment:
+      - CRON_SECRET=${CRON_SECRET}
+      - APP_URL=http://app:3000
+    command: >
+      sh -c "echo '*/5 * * * * wget -q -O- --header=\"Authorization: Bearer $$CRON_SECRET\" --post-data=\"\" $$APP_URL/api/cron/cleanup || true' | crontab - && crond -f -L /dev/stdout"
+    depends_on: [app]
+    networks: [zync]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - SITE_DOMAIN=${SITE_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app, peerjs]
+    networks: [zync]
+
+networks:
+  zync:
+    driver: bridge
+
+volumes:
+  redis_data:
+  caddy_data:
+  caddy_config:

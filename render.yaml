@@ -1,0 +1,42 @@
+# Render Blueprint — deploy Zync (app + PeerJS) on free tiers with free
+# *.onrender.com subdomains. No custom domain or credit card required.
+# Use: Render Dashboard -> New -> Blueprint -> pick this repo.
+
+services:
+  # Main Next.js app
+  - type: web
+    name: zync
+    runtime: node
+    plan: free
+    autoDeploy: true
+    buildCommand: corepack enable && pnpm install && node scripts/generate-blog.mjs && pnpm build
+    startCommand: pnpm start
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false # set to your https://zync.onrender.com URL after first deploy
+      - key: FILEPIZZA_SECRET
+        generateValue: true
+      # Point the app at the companion PeerJS service below
+      - key: PEERJS_HOST
+        fromService:
+          type: web
+          name: zync-peerjs
+          property: host
+      - key: PEERJS_PATH
+        value: /peerjs/filepizza
+      # Free public TURN is on by default (Open Relay) — no keys needed.
+      # Add REDIS_URL (Upstash) here for multi-instance scaling if desired.
+
+  # Self-hosted PeerJS signaling server (bin/peerjs.js, binds to $PORT)
+  - type: web
+    name: zync-peerjs
+    runtime: node
+    plan: free
+    autoDeploy: true
+    buildCommand: corepack enable && pnpm install --prod=false
+    startCommand: node bin/peerjs.js
+    envVars:
+      - key: NODE_VERSION
+        value: '22'

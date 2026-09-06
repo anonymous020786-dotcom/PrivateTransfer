@@ -1,0 +1,73 @@
+# Production stack for Hostinger VPS.
+# Caddy handles HTTPS for videodownloaders.cloud AND any verified custom user
+# domains automatically via on-demand TLS (Let's Encrypt). No manual cert work.
+#
+# Custom domain flow:
+#   1. User adds domain in Zync → gets a TXT verification token
+#   2. User adds A record → 187.127.182.5 + TXT record in their DNS
+#   3. User clicks Verify in Zync → Zync confirms TXT, marks domain verified in Redis
+#   4. First HTTPS request to their domain → Caddy asks /api/custom-domain/caddy-check
+#      → Zync returns 200 → Caddy auto-provisions Let's Encrypt cert → done
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  app:
+    image: ghcr.io/zestcommerce841428-png/zync:latest
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - REDIS_URL=redis://redis:6379
+      - NEXT_PUBLIC_SITE_URL=https://videodownloaders.cloud
+      - ADMIN_EMAILS=zestcommerce841428@gmail.com
+      # FILEPIZZA_SECRET, R2 credentials, SMTP, Supabase etc. injected via project environment
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    depends_on:
+      - redis
+
+  cron:
+    image: alpine:3.19
+    restart: unless-stopped
+    environment:
+      - CRON_SECRET=${CRON_SECRET}
+      - APP_URL=http://app:3000
+    command: >
+      sh -c "echo '*/5 * * * * wget -q -O- --header=\"Authorization: Bearer $$CRON_SECRET\" --post-data=\"\" $$APP_URL/api/cron/cleanup || true
+      */5 * * * * wget -q -O- --header=\"Authorization: Bearer $$CRON_SECRET\" --post-data=\"\" $$APP_URL/api/cron/scan || true' | crontab - && crond -f -L /dev/stdout"
+    depends_on:
+      - app
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=60
+      - WATCHTOWER_LABEL_ENABLE=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:

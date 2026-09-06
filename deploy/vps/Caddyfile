@@ -1,0 +1,32 @@
+{
+	# Ask Zync before issuing a cert for any unknown domain.
+	# Caddy only proceeds if the endpoint returns 2xx.
+	on_demand_tls {
+		ask http://app:3000/api/custom-domain/caddy-check
+		interval 2m
+		burst 5
+	}
+
+	email contact@videodownloaders.cloud
+}
+
+# ── Main domain ───────────────────────────────────────────────────────────────
+videodownloaders.cloud {
+	encode gzip zstd
+	reverse_proxy app:3000
+}
+
+www.videodownloaders.cloud {
+	redir https://videodownloaders.cloud{uri} 301
+}
+
+# ── Custom user domains (on-demand TLS) ──────────────────────────────────────
+# Any domain that CNAMEs to this VPS gets an automatic Let's Encrypt cert,
+# provided Zync confirms it is a verified custom domain (see caddy-check above).
+https:// {
+	tls {
+		on_demand
+	}
+	encode gzip zstd
+	reverse_proxy app:3000
+}

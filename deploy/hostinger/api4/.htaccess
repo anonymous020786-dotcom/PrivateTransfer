@@ -1,0 +1,20 @@
+# Zync api4 — endpoint protection + Authorization header passthrough
+
+# Many shared hosts (PHP-CGI/FastCGI) strip the Authorization header before it
+# reaches PHP. These rules forward it so Bearer-token auth works.
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTP:Authorization} ^(.+)$
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+</IfModule>
+<IfModule mod_setenvif.c>
+  SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
+# Never serve the secret config directly.
+<Files "config.php">
+  Require all denied
+</Files>
+
+# Hide directory listings.
+Options -Indexes
