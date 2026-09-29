@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { GetObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { getStorageClient, getStorageBucket } from '../../../../../lib/storage'
+import { presignDownload } from '../../../../../lib/storage'
 import {
   getTransfer,
   updateTransfer,
-  hashPassword,
+  verifyTransferPassword,
   hashIp,
   sweepExpiredTransfers,
   scheduleBurn,
@@ -19,6 +17,8 @@ import {
   tplDownloadReceipt,
 } from '../../../../../emailTemplates'
 import { brand } from '../../../../../brand'
+import { deliverWebhook } from '../../../../../lib/webhooks'
+import { recordActivity } from '../../../../../lib/activity'
 import { rateLimit, getClientIp } from '../../../../../rateLimit'
 import {
   tooManyRequests,
@@ -69,7 +69,7 @@ export async function POST(
 
   if (transfer.passwordHash) {
     const supplied = body.data.password
-    if (!supplied || hashPassword(supplied) !== transfer.passwordHash)
+    if (!supplied || !verifyTransferPassword(supplied, transfer.passwordHash))
       return err('Incorrect password.', { status: 403 })
   }
 
@@ -82,22 +82,17 @@ export async function POST(
   const file = transfer.files[body.data.fileIndex]
   if (!file) return notFound('File not found.')
 
-  const storage = await getStorageClient()
-  const bucket = await getStorageBucket()
   const isPreview = body.data.preview
 
-  const url = await getSignedUrl(
-    storage,
-    new GetObjectCommand({
-      Bucket: bucket,
-      Key: file.key,
-      ...(isPreview
-        ? { ResponseContentType: file.type || 'application/octet-stream' }
-        : {
-            ResponseContentDisposition: `attachment; filename="${encodeURIComponent(file.name)}"`,
-          }),
-    }),
-    { expiresIn: isPreview ? 300 : 900 },
+  const url = await presignDownload(
+    file.key,
+    isPreview
+      ? { contentType: file.type || 'application/octet-stream', expiresIn: 300 }
+      : {
+          filename: file.name,
+          contentType: file.type || undefined,
+          expiresIn: 900,
+        },
   )
 
   // On first file of a batch download (not previews): update count, record event, send email
@@ -163,34 +158,39 @@ export async function POST(
       })
     }
 
-    // Fire webhook (fire-and-forget, never block the download)
+    if (transfer.ownerId)
+      void recordActivity(transfer.ownerId, 'transfer.downloaded', {
+        detail: `${transfer.title || slug} · ${country}`,
+      })
+
+    // Webhooks (fire-and-forget, never block the download): signed, SSRF-
+    // checked and recorded in the transfer's delivery log.
     if (transfer.webhookUrl) {
-      void fetch(transfer.webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'transfer.downloaded',
+      void deliverWebhook({
+        url: transfer.webhookUrl,
+        slug,
+        ownerId: transfer.ownerId,
+        event: 'transfer.downloaded',
+        payload: {
           slug,
           downloadCount: newCount,
-          country: req.headers.get('cf-ipcountry') ?? 'XX',
+          country,
           at: new Date().toISOString(),
           title: transfer.title,
           fileCount: transfer.files.length,
-        }),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {})
+        },
+      })
     }
-
-    // Slack notification (fire-and-forget)
     if (transfer.slackWebhookUrl) {
-      const country = req.headers.get('cf-ipcountry') ?? 'XX'
       const text = `📥 *${transfer.title || 'Untitled transfer'}* was downloaded (${newCount} total) · ${country} · <${brand.url}/transfer/${slug}|View transfer>`
-      void fetch(transfer.slackWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => {})
+      void deliverWebhook({
+        url: transfer.slackWebhookUrl,
+        slug,
+        ownerId: transfer.ownerId,
+        event: 'transfer.downloaded',
+        payload: { text },
+        format: 'slack',
+      })
     }
 
     if (transfer.burnAfterRead) {

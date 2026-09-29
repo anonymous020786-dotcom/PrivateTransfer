@@ -34,8 +34,16 @@ import CloseIcon from '@mui/icons-material/Close'
 import ZoomInIcon from '@mui/icons-material/ZoomIn'
 import StarIcon from '@mui/icons-material/Star'
 import SendIcon from '@mui/icons-material/Send'
+import IntegrityCheck from './IntegrityCheck'
+import TextPreview, { isTextPreviewable } from './TextPreview'
 
-type FileInfo = { name: string; size: number; type: string; path?: string }
+type FileInfo = {
+  name: string
+  size: number
+  type: string
+  path?: string
+  sha256?: string
+}
 
 type Props = {
   slug: string
@@ -74,8 +82,9 @@ function fileIcon(type: string): React.ReactElement {
   return <InsertDriveFileIcon fontSize="small" color="action" />
 }
 
-function isPreviewable(type: string): boolean {
+function isPreviewable(type: string, name = ''): boolean {
   return (
+    isTextPreviewable(type, name) ||
     type.startsWith('image/') ||
     type.startsWith('video/') ||
     type.startsWith('audio/') ||
@@ -116,7 +125,6 @@ export default function DownloadCard({
   encrypted,
   scanStatus,
   passwordHint,
-  senderEmail,
 }: Props): React.ReactElement {
   const [now, setNow] = React.useState<number | null>(null)
   React.useEffect(() => {
@@ -302,6 +310,7 @@ export default function DownloadCard({
   // Preview dialog
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null)
   const [previewType, setPreviewType] = React.useState<string>('')
+  const [previewName, setPreviewName] = React.useState('')
   const [previewLoading, setPreviewLoading] = React.useState<number | null>(
     null,
   )
@@ -369,7 +378,12 @@ export default function DownloadCard({
       })
       if (!res.ok) return
       const { url } = await res.json()
-      setPreviewType(files[index].type)
+      setPreviewType(
+        isTextPreviewable(files[index].type, files[index].name)
+          ? 'text'
+          : files[index].type,
+      )
+      setPreviewName(files[index].name)
       setPreviewUrl(url)
     } catch {
       // ignore
@@ -427,7 +441,11 @@ export default function DownloadCard({
           finish()
         })
       })
-      const blob = new Blob(zipChunks, { type: 'application/zip' })
+      // fflate emits ArrayBuffer-backed chunks; the cast only narrows the
+      // generic Uint8Array<ArrayBufferLike> type TS infers.
+      const blob = new Blob(zipChunks as BlobPart[], {
+        type: 'application/zip',
+      })
       const a = document.createElement('a')
       a.href = URL.createObjectURL(blob)
       a.download = `zync-${slug}.zip`
@@ -675,7 +693,7 @@ export default function DownloadCard({
             sx={{ py: 0.5 }}
             secondaryAction={
               <Stack direction="row" spacing={0.5}>
-                {isPreviewable(f.type) && !encrypted && (
+                {isPreviewable(f.type, f.name) && !encrypted && (
                   <IconButton
                     size="small"
                     onClick={() => previewFile(i)}
@@ -762,6 +780,8 @@ export default function DownloadCard({
             ? 'Download file'
             : 'Download all as ZIP'}
       </Button>
+
+      <IntegrityCheck files={files} />
 
       {/* Review widget — shown after the first successful download */}
       {hasDownloaded && (
@@ -889,6 +909,9 @@ export default function DownloadCard({
             minHeight: 300,
           }}
         >
+          {previewUrl && previewType === 'text' && (
+            <TextPreview url={previewUrl} name={previewName} />
+          )}
           {previewUrl && previewType.startsWith('image/') && (
             <Box
               component="img"

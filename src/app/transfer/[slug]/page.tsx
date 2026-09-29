@@ -167,12 +167,15 @@ export default async function TransferDownloadPage({
                   <PageViewPing slug={transfer.slug} />
                   <DownloadCard
                     slug={transfer.slug}
-                    files={transfer.files.map(({ name, size, type, path }) => ({
-                      name,
-                      size,
-                      type,
-                      ...(path ? { path } : {}),
-                    }))}
+                    files={transfer.files.map(
+                      ({ name, size, type, path, sha256 }) => ({
+                        name,
+                        size,
+                        type,
+                        ...(path ? { path } : {}),
+                        ...(sha256 ? { sha256 } : {}),
+                      }),
+                    )}
                     totalSize={transfer.totalSize}
                     expiresAt={transfer.expiresAt}
                     title={transfer.title}

@@ -512,3 +512,20 @@ export function tplCriticalAlert(d: { event: string; detail: string }): {
     }),
   }
 }
+
+export function tplVerificationCode(d: {
+  code: string
+  purpose: 'sign in' | 'confirm your account' | 'reset your password'
+}): { subject: string; html: string; text: string } {
+  return {
+    subject: `Your ${brand.name} code: ${d.code}`,
+    text: `Use this code to ${d.purpose}: ${d.code}\nIt expires in 15 minutes. If you didn't request it, ignore this email.`,
+    html: baseLayout({
+      preheader: `Your code is ${d.code}`,
+      heading: `Your verification code`,
+      intro: `Use this code to ${esc(d.purpose)}. It expires in 15 minutes.`,
+      bodyHtml: `<div style="font-size:32px;font-weight:800;letter-spacing:8px;text-align:center;color:${TEXT};padding:12px 0;">${esc(d.code)}</div>`,
+      footerNote: `If you didn't request this code, you can safely ignore this email.`,
+    }),
+  }
+}

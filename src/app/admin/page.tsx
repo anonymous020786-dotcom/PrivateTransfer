@@ -14,6 +14,8 @@ import { getStatsStore } from '../../stats'
 import AdminTools from '../../components/AdminTools'
 import BlogManager from '../../components/admin/BlogManager'
 import SettingsManager from '../../components/admin/SettingsManager'
+import SystemOverview from '../../components/admin/SystemOverview'
+import UsersManager from '../../components/admin/UsersManager'
 
 export const metadata: Metadata = {
   title: 'Admin',
@@ -66,6 +68,14 @@ export default async function AdminPage(): Promise<React.ReactElement> {
           </Grid>
         ))}
       </Grid>
+
+      <Box sx={{ mb: 5 }}>
+        <SystemOverview />
+      </Box>
+
+      <Box sx={{ mb: 5 }}>
+        <UsersManager />
+      </Box>
 
       <Box sx={{ maxWidth: 640, mb: 5 }}>
         <AdminTools />

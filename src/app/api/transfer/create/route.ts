@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { PutObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import {
-  getStorageClient,
-  getStorageBucket,
-  getStorageClass,
   isStorageConfigured,
+  presignUpload,
+  createMultipartUpload,
+  MULTIPART_THRESHOLD,
+  type MultipartPlan,
 } from '../../../../lib/storage'
 import {
   saveTransfer,
   expiryDate,
   defaultExpiryDays,
   hashPassword,
+  hashToken,
   addUserTransferIndex,
   sweepExpiredTransfers,
+  type TransferFile,
 } from '../../../../lib/transfer'
 import { getSupabaseServerClient } from '../../../../supabase/server'
 import { lookupApiKey } from '../../../../lib/apiKeys'
@@ -24,11 +25,14 @@ import { tooManyRequests, ok, err } from '../../../../lib/apiResponse'
 import { verifyRecaptcha } from '../../../../recaptcha'
 import { isFeatureEnabled } from '../../../../lib/appSettings'
 import { slugExists } from '../../../../lib/transfer'
+import { checkWebhookUrl, webhookSecretFor } from '../../../../lib/webhooks'
+import { recordActivity, requestContext } from '../../../../lib/activity'
 
 export const dynamic = 'force-dynamic'
 
-// 200 GB total per transfer; individual files are limited by S3/R2 single-PUT cap (~5 GB).
-// For > 5 GB single files, multipart upload support can be added as a future enhancement.
+// 200 GB total per transfer. Files above MULTIPART_THRESHOLD are uploaded in
+// parts (S3/R2 multipart, or staged parts on the local driver), so single files
+// are not limited by the ~5 GB single-PUT cap.
 const MAX_BYTES = Number(
   process.env.NEXT_PUBLIC_TRANSFER_MAX_BYTES ?? 200 * 1024 * 1024 * 1024,
 )
@@ -126,6 +130,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     workspaceId: requestedWorkspaceId,
   } = body.data
 
+  for (const hook of [webhookUrl, slackWebhookUrl]) {
+    const problem = hook ? await checkWebhookUrl(hook) : null
+    if (problem) return err(problem)
+  }
+
   const captcha = await verifyRecaptcha(recaptchaToken, { minScore: 0.3 })
   if (!captcha.ok)
     return err('Spam check failed. Please try again.', { status: 400 })
@@ -166,43 +175,48 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     } else {
       slug = await generateShortSlug()
     }
-    const storage = await getStorageClient()
-    const bucket = await getStorageBucket()
-    const storageClass = await getStorageClass()
-
     void sweepExpiredTransfers()
 
     const uploadUrls: string[] = []
-    const fileRecords: Array<{
-      key: string
-      name: string
-      size: number
-      type: string
-    }> = []
+    const multipart: Array<MultipartPlan | null> = []
+    const fileRecords: TransferFile[] = []
 
     for (const f of files) {
       const key = `${slug}/${crypto.randomUUID()}_${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-      const cmd = new PutObjectCommand({
-        Bucket: bucket,
-        Key: key,
-        ContentType: f.type || 'application/octet-stream',
-        ContentLength: f.size,
-        // S3: use Intelligent-Tiering for cost savings on infrequently accessed files
-        ...(storageClass ? { StorageClass: storageClass } : {}),
-      })
-      // 4-hour window gives enough time for large file uploads to start
-      const url = await getSignedUrl(storage, cmd, { expiresIn: 14400 })
-      uploadUrls.push(url)
+      let multipartUploadId: string | undefined
+      if (f.size > MULTIPART_THRESHOLD) {
+        const plan = await createMultipartUpload(key, {
+          contentType: f.type,
+          size: f.size,
+        })
+        multipart.push(plan)
+        uploadUrls.push('')
+        multipartUploadId = plan.uploadId
+      } else {
+        // 4-hour window gives enough time for large file uploads to start
+        uploadUrls.push(
+          await presignUpload(key, {
+            contentType: f.type,
+            size: f.size,
+            expiresIn: 14400,
+          }),
+        )
+        multipart.push(null)
+      }
       fileRecords.push({
         key,
         name: f.name,
         size: f.size,
         type: f.type,
         ...(f.path ? { path: f.path } : {}),
+        ...(multipartUploadId ? { multipartUploadId } : {}),
       })
     }
 
     const expires = expiryDate(expiryDays)
+    // One-time secret proving the caller created this transfer; required to
+    // mark it complete (which triggers recipient emails).
+    const uploadToken = crypto.randomUUID().replace(/-/g, '')
 
     await saveTransfer({
       slug,
@@ -246,15 +260,32 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         requestedWorkspaceId && ownerId ? requestedWorkspaceId : null,
       scanStatus: null,
       scanAnalysisId: null,
+      uploadTokenHash: hashToken(uploadToken),
       createdAt: new Date().toISOString(),
       completed: false,
     })
 
     if (ownerId) {
       await addUserTransferIndex(ownerId, slug, expires)
+      void recordActivity(ownerId, 'transfer.created', {
+        ...requestContext(req),
+        detail: title || `${files.length} file${files.length === 1 ? '' : 's'}`,
+      })
     }
 
-    return ok({ slug, uploadUrls, expiresAt: expires }, { status: 201, rl })
+    return ok(
+      {
+        slug,
+        uploadUrls,
+        multipart,
+        uploadToken,
+        expiresAt: expires,
+        ...(webhookUrl
+          ? { webhookSecret: webhookSecretFor(ownerId, slug) }
+          : {}),
+      },
+      { status: 201, rl },
+    )
   } catch (e) {
     console.error('[transfer/create]', e)
     return err('Failed to create transfer. Please try again.', { status: 500 })

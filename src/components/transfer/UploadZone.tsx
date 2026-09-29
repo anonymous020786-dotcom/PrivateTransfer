@@ -26,6 +26,8 @@ function formatBytes(n: number): string {
   return `${n} B`
 }
 
+const SHARE_CACHE = 'zync-share-target'
+
 type Props = {
   files: File[]
   onChange: (files: File[]) => void
@@ -79,6 +81,64 @@ export default function UploadZone({
         )
     addFiles(arr, pathArr)
   }
+
+  // Paste to upload: files or screenshots on the clipboard are added directly.
+  // Pastes into text fields are left alone unless they carry files.
+  const addFilesRef = React.useRef(addFiles)
+  addFilesRef.current = addFiles
+  React.useEffect(() => {
+    if (disabled) return
+    const onPaste = (e: ClipboardEvent) => {
+      const pasted = Array.from(e.clipboardData?.files ?? [])
+      if (pasted.length === 0) return
+      e.preventDefault()
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+      const named = pasted.map((f, i) =>
+        // Browsers name clipboard images "image.png"; make them unique.
+        /^image\.\w+$/.test(f.name)
+          ? new File(
+              [f],
+              `pasted-${stamp}${i ? `-${i}` : ''}.${f.name.split('.').pop()}`,
+              {
+                type: f.type,
+              },
+            )
+          : f,
+      )
+      addFilesRef.current(named)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [disabled])
+
+  // Files shared to the installed app from the OS share sheet are stashed by
+  // the service worker (see public/sw.js) and picked up here.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('shared') !== '1' || !('caches' in window)) return
+    void (async () => {
+      const cache = await caches.open(SHARE_CACHE)
+      const shared: File[] = []
+      for (const req of await cache.keys()) {
+        const res = await cache.match(req)
+        if (!res) continue
+        const name = decodeURIComponent(
+          res.headers.get('X-File-Name') || 'shared-file',
+        )
+        const blob = await res.blob()
+        shared.push(new File([blob], name, { type: blob.type }))
+        await cache.delete(req)
+      }
+      if (shared.length) addFilesRef.current(shared)
+      params.delete('shared')
+      const qs = params.toString()
+      window.history.replaceState(
+        null,
+        '',
+        `${window.location.pathname}${qs ? `?${qs}` : ''}`,
+      )
+    })()
+  }, [])
 
   const remove = (idx: number) => {
     onChange(files.filter((_, i) => i !== idx))
@@ -168,7 +228,8 @@ export default function UploadZone({
             : `${files.length} file${files.length !== 1 ? 's' : ''} selected`}
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          Up to {MAX_FILES} files · max {formatBytes(MAX_BYTES)} total
+          Up to {MAX_FILES} files · max {formatBytes(MAX_BYTES)} total · or
+          paste with Ctrl+V
         </Typography>
         <Box
           component="input"

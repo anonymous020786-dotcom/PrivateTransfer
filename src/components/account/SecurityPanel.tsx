@@ -17,6 +17,7 @@ import DialogContent from '@mui/material/DialogContent'
 import DialogActions from '@mui/material/DialogActions'
 import CircularProgress from '@mui/material/CircularProgress'
 import { getSupabaseBrowserClient } from '../../supabase/client'
+import { reportActivity } from './reportActivity'
 
 function SectionCard({
   title,
@@ -49,6 +50,8 @@ export default function SecurityPanel({
       <ChangePassword />
       <BackupEmail initial={initialBackupEmail} />
       <TotpSection />
+      <Sessions />
+      <YourData />
       <DangerZone email={email} />
     </Box>
   )
@@ -75,6 +78,7 @@ function ChangePassword(): React.ReactElement {
     setBusy(false)
     if (error) setMsg({ type: 'error', text: error.message })
     else {
+      reportActivity('auth.password_changed')
       setMsg({ type: 'success', text: 'Password updated.' })
       setPw('')
       setConfirm('')
@@ -222,6 +226,7 @@ function TotpSection(): React.ReactElement {
     else {
       setEnroll(null)
       setCode('')
+      reportActivity('auth.mfa_enabled')
       setMsg({ type: 'success', text: 'Two-factor authentication enabled.' })
       refresh()
     }
@@ -234,6 +239,7 @@ function TotpSection(): React.ReactElement {
     setBusy(false)
     if (error) setMsg({ type: 'error', text: error.message })
     else {
+      reportActivity('auth.mfa_disabled')
       setMsg({ type: 'success', text: 'Two-factor disabled.' })
       refresh()
     }
@@ -308,6 +314,62 @@ function TotpSection(): React.ReactElement {
           </Button>
         </Stack>
       )}
+    </SectionCard>
+  )
+}
+
+function Sessions(): React.ReactElement {
+  const supabase = getSupabaseBrowserClient()
+  const [busy, setBusy] = React.useState(false)
+  const [msg, setMsg] = React.useState<{
+    type: 'success' | 'error'
+    text: string
+  } | null>(null)
+
+  const signOutOthers = async () => {
+    setBusy(true)
+    setMsg(null)
+    const { error } = (await supabase?.auth.signOut({ scope: 'others' })) || {}
+    setBusy(false)
+    if (error) setMsg({ type: 'error', text: error.message })
+    else {
+      reportActivity('auth.signout_others')
+      setMsg({
+        type: 'success',
+        text: 'Signed out of every other browser and device.',
+      })
+    }
+  }
+
+  return (
+    <SectionCard title="Sessions">
+      {msg && (
+        <Alert severity={msg.type} sx={{ mb: 2 }}>
+          {msg.text}
+        </Alert>
+      )}
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Lost a device or signed in on a shared computer? End every session
+        except this one.
+      </Typography>
+      <Button variant="outlined" onClick={signOutOthers} disabled={busy}>
+        {busy ? <CircularProgress size={20} /> : 'Sign out of other devices'}
+      </Button>
+    </SectionCard>
+  )
+}
+
+function YourData(): React.ReactElement {
+  return (
+    <SectionCard title="Your data">
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+        Download a copy of everything we store about you — profile, transfers,
+        file requests, boards, templates, contacts, workspaces and your activity
+        log — as a JSON file.
+      </Typography>
+      <Button variant="outlined" href="/api/account/export">
+        Export my data
+      </Button>
     </SectionCard>
   )
 }

@@ -301,7 +301,7 @@ export default function SettingsManager(): React.ReactElement {
 
               {/* Provider selector */}
               <Stack direction="row" spacing={1}>
-                {(['r2', 's3'] as const).map((p) => (
+                {(['r2', 's3', 'local'] as const).map((p) => (
                   <Button
                     key={p}
                     variant={
@@ -310,10 +310,23 @@ export default function SettingsManager(): React.ReactElement {
                     size="small"
                     onClick={() => patch({ storage_provider: p })}
                   >
-                    {p === 'r2' ? 'Cloudflare R2' : 'AWS S3'}
+                    {p === 'r2'
+                      ? 'Cloudflare R2'
+                      : p === 's3'
+                        ? 'AWS S3'
+                        : 'Local disk'}
                   </Button>
                 ))}
               </Stack>
+
+              {s.storage_provider === 'local' && (
+                <Alert severity="info" sx={{ py: 0.5 }}>
+                  Files are stored on this server&apos;s disk under{' '}
+                  <code>.data/objects</code> (or <code>ZYNC_DATA_DIR</code>) and
+                  streamed through the app with signed, expiring URLs. Ideal for
+                  a single self-hosted server; use R2/S3 to scale out.
+                </Alert>
+              )}
 
               {/* R2 fields */}
               {(s.storage_provider === 'r2' || !s.storage_provider) && (

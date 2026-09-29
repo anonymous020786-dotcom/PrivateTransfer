@@ -48,7 +48,7 @@ export default function JoinWorkspacePage(): React.ReactElement {
 
   React.useEffect(() => {
     void join()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <Container maxWidth="xs" sx={{ py: { xs: 8, md: 14 } }}>

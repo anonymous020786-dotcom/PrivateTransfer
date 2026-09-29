@@ -76,8 +76,47 @@ function createStream(port) {
   })
 }
 
+// ── PWA share target ─────────────────────────────────────────────────────────
+// The web app manifest points share_target at POST /share-target. Files are
+// stashed in Cache Storage (the page reads and clears them) and the browser is
+// redirected to the transfer page. Shared text/URLs go into the title/message.
+const SHARE_CACHE = 'zync-share-target'
+
+async function handleShare(request) {
+  const form = await request.formData()
+  const cache = await caches.open(SHARE_CACHE)
+  const files = form.getAll('files').filter((f) => f && typeof f !== 'string')
+  await Promise.all(
+    files.map((file, i) =>
+      cache.put(
+        new Request(`/__shared/${Date.now()}-${i}`),
+        new Response(file, {
+          headers: {
+            'Content-Type': file.type || 'application/octet-stream',
+            'X-File-Name': encodeURIComponent(file.name || `shared-${i}`),
+          },
+        }),
+      ),
+    ),
+  )
+  const params = new URLSearchParams({ shared: '1' })
+  const title = form.get('title')
+  const text = [form.get('text'), form.get('url')].filter(Boolean).join('
+')
+  if (title) params.set('title', String(title))
+  if (text) params.set('text', text)
+  return Response.redirect(`/transfer?${params}`, 303)
+}
+
 self.onfetch = (event) => {
   const url = event.request.url
+
+  if (
+    event.request.method === 'POST' &&
+    new URL(url).pathname === '/share-target'
+  ) {
+    return event.respondWith(handleShare(event.request))
+  }
 
   // this only works for Firefox
   if (url.endsWith('/ping')) {

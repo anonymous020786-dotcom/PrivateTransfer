@@ -1,8 +1,7 @@
 import 'server-only'
-import { createHash } from 'crypto'
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { getRedisClient } from '../redisClient'
-import { DeleteObjectsCommand } from '@aws-sdk/client-s3'
-import { getStorageClient, getStorageBucket } from './storage'
+import { deleteStoredObjects } from './storage'
 
 export type TransferFile = {
   key: string
@@ -10,6 +9,8 @@ export type TransferFile = {
   size: number
   type: string
   path?: string // relative path including folders, e.g. "folder/subfolder/file.txt"
+  multipartUploadId?: string // set while a multipart upload is in progress
+  sha256?: string // hex digest of the original (pre-encryption) bytes, reported by the uploader
 }
 
 export type DownloadEvent = {
@@ -86,6 +87,7 @@ export type TransferRecord = {
     | 'skipped'
     | null
   scanAnalysisId: string | null // VirusTotal analysis ID while polling
+  uploadTokenHash: string | null // SHA-256 of the one-time token that authorises /complete
 }
 
 const KEY = (slug: string) => `transfer:${slug}`
@@ -95,8 +97,48 @@ const CLEANUP_KEY = 'transfer:cleanup'
 // Max 1 year + 5 days buffer for Redis TTLs
 const MAX_TTL_SECONDS = 370 * 24 * 3600
 
+// Transfer passwords are hashed with salted scrypt. Records created before
+// this used unsalted SHA-256 hex digests; verifyTransferPassword accepts both.
 export function hashPassword(password: string): string {
-  return createHash('sha256').update(password).digest('hex')
+  const salt = randomBytes(16)
+  const key = scryptSync(password, salt, 32)
+  return `scrypt$${salt.toString('base64')}$${key.toString('base64')}`
+}
+
+export function verifyTransferPassword(
+  password: string,
+  stored: string | null,
+): boolean {
+  if (!stored) return true
+  let expected: Buffer
+  let actual: Buffer
+  if (stored.startsWith('scrypt$')) {
+    const [, salt, key] = stored.split('$')
+    expected = Buffer.from(key ?? '', 'base64')
+    actual = scryptSync(
+      password,
+      Buffer.from(salt ?? '', 'base64'),
+      expected.length || 32,
+    )
+  } else {
+    expected = Buffer.from(stored, 'hex')
+    actual = createHash('sha256').update(password).digest()
+  }
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
+}
+
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+export function tokenMatches(
+  token: string | undefined,
+  hash: string | null,
+): boolean {
+  if (!token || !hash) return false
+  const a = Buffer.from(hashToken(token), 'hex')
+  const b = Buffer.from(hash, 'hex')
+  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 export function hashIp(ip: string): string {
@@ -158,6 +200,7 @@ export async function getTransfer(
     r.scanStatus ??= null
     r.scanAnalysisId ??= null
     r.passwordHint ??= null
+    r.uploadTokenHash ??= null
     return r
   } catch {
     return null
@@ -187,7 +230,7 @@ export async function deleteTransfer(slug: string): Promise<void> {
 
 async function purgeCleanupEntries(slug: string): Promise<void> {
   const redis = getRedisClient()
-  const all = await redis.zrange(CLEANUP_KEY, 0, -1)
+  const all = await redis.zrange(CLEANUP_KEY, '0', '-1')
   const toRemove = all.filter((entry) => {
     try {
       return JSON.parse(entry).slug === slug
@@ -226,13 +269,7 @@ export async function sweepExpiredTransfers(limit = 20): Promise<number> {
 
   if (storageKeys.length > 0) {
     try {
-      const client = await getStorageClient()
-      await client.send(
-        new DeleteObjectsCommand({
-          Bucket: await getStorageBucket(),
-          Delete: { Objects: storageKeys.map((Key) => ({ Key })), Quiet: true },
-        }),
-      )
+      await deleteStoredObjects(storageKeys)
     } catch {
       // best-effort — lifecycle rule is a safety net
     }
@@ -263,13 +300,15 @@ export async function removeUserTransferIndex(
 
 export async function listUserTransfers(
   ownerId: string,
+  opts: { includeIncomplete?: boolean } = {},
 ): Promise<TransferRecord[]> {
   const redis = getRedisClient()
   const slugs = await redis.zrangebyscore(USER_KEY(ownerId), Date.now(), '+inf')
   if (slugs.length === 0) return []
   const records = await Promise.all(slugs.map(getTransfer))
   const valid = records.filter(
-    (r): r is TransferRecord => r !== null && r.completed,
+    (r): r is TransferRecord =>
+      r !== null && (r.completed || !!opts.includeIncomplete),
   )
   await redis.zremrangebyscore(USER_KEY(ownerId), '-inf', Date.now() - 1)
   return valid.sort(
@@ -372,4 +411,53 @@ export async function renewTransfer(
 // Mark scheduled notification as sent
 export async function markNotificationSent(slug: string): Promise<void> {
   await updateTransfer(slug, { notificationSent: true })
+}
+
+// A complete record with safe defaults; callers override what they need.
+export function newTransferRecord(
+  fields: Pick<TransferRecord, 'slug' | 'files' | 'expiresAt' | 'expiryDays'> &
+    Partial<TransferRecord>,
+): TransferRecord {
+  return {
+    ownerId: null,
+    totalSize: fields.files.reduce((s, f) => s + f.size, 0),
+    maxDownloads: null,
+    downloadCount: 0,
+    downloadEvents: [],
+    title: '',
+    message: '',
+    passwordHash: null,
+    passwordHint: null,
+    notifyEmail: null,
+    notifyEveryDownload: false,
+    notifiedAt: null,
+    recipientEmails: [],
+    recipientTokens: {},
+    createdAt: new Date().toISOString(),
+    completed: false,
+    burnAfterRead: false,
+    background: null,
+    logoUrl: null,
+    backgroundImageUrl: null,
+    webhookUrl: null,
+    encrypted: false,
+    reviews: [],
+    comments: [],
+    senderName: null,
+    scheduledAt: null,
+    notificationSent: true,
+    boardIds: [],
+    customSlug: false,
+    slackWebhookUrl: null,
+    emailAccentColor: null,
+    replyTo: null,
+    pageViewCount: 0,
+    emailOpenCount: 0,
+    expireWarnedAt: null,
+    workspaceId: null,
+    scanStatus: null,
+    scanAnalysisId: null,
+    uploadTokenHash: null,
+    ...fields,
+  }
 }

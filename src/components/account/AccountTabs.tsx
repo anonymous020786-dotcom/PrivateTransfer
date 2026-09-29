@@ -17,6 +17,7 @@ import TransferHistory from './TransferHistory'
 import ApiKeysPanel from './ApiKeysPanel'
 import CustomDomainManager from '../CustomDomainManager'
 import { getSupabaseBrowserClient } from '../../supabase/client'
+import ActivityPanel from './ActivityPanel'
 
 export default function AccountTabs({
   email,
@@ -83,6 +84,7 @@ export default function AccountTabs({
         <Tab label="Profile" />
         <Tab label="History" />
         <Tab label="Security" />
+        <Tab label="Activity" />
         <Tab label="API Keys" />
         <Tab label="Custom Domain" />
       </Tabs>
@@ -106,8 +108,9 @@ export default function AccountTabs({
         />
       )}
 
-      {tab === 3 && <ApiKeysPanel />}
-      {tab === 4 && <CustomDomainManager />}
+      {tab === 3 && <ActivityPanel />}
+      {tab === 4 && <ApiKeysPanel />}
+      {tab === 5 && <CustomDomainManager />}
     </Box>
   )
 }

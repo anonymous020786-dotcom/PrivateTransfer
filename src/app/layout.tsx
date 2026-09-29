@@ -1,4 +1,5 @@
 import React from 'react'
+import Script from 'next/script'
 import type { Metadata, Viewport } from 'next'
 import Box from '@mui/material/Box'
 import Header from '../components/Header'
@@ -14,6 +15,7 @@ import WhatsAppFab from '../components/WhatsAppFab'
 import CookieConsent from '../components/consent/CookieConsent'
 import { ConsentProvider } from '../components/consent/ConsentContext'
 import WelcomeDialog from '../components/WelcomeDialog'
+import ServiceWorkerRegistrar from '../components/ServiceWorkerRegistrar'
 
 // Pre-hydration color-scheme init. Mirrors MUI's class-based color scheme
 // (storage key: mui-mode; classes: light / dark) and runs before paint to
@@ -76,12 +78,13 @@ export default function RootLayout({
         <head>
           {/*
             Pre-hydration color-scheme init (prevents a flash of the wrong
-            theme). Inlined via dangerouslySetInnerHTML in <head> — the
-            next-themes pattern. React 19 only warns about EXTERNAL `<script
-            src>` rendered in a component; an inline script is injected into the
-            initial HTML and runs before hydration with no warning.
+            theme). next/script's beforeInteractive strategy injects it into the
+            initial HTML so it runs before hydration, without React rendering a
+            raw <script> element (which React 19 warns about).
           */}
-          <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
+          <Script id="theme-init" strategy="beforeInteractive">
+            {THEME_INIT}
+          </Script>
           {/*
             Manifest is emitted manually (not via metadata.manifest) so we can
             set crossOrigin="use-credentials". Behind Cloudflare the credential-
@@ -119,6 +122,7 @@ export default function RootLayout({
                 <BackToTop />
                 <CookieConsent />
                 <WelcomeDialog />
+                <ServiceWorkerRegistrar />
               </FilePizzaQueryClientProvider>
               <Analytics />
             </ConsentProvider>

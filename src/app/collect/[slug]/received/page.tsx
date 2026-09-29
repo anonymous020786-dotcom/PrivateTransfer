@@ -16,9 +16,7 @@ import {
   getSupabaseServerClient,
 } from '../../../../supabase/server'
 import { getCollect } from '../../../../lib/collect'
-import { getStorageClient, getStorageBucket } from '../../../../lib/storage'
-import { GetObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { presignDownload } from '../../../../lib/storage'
 import { brand } from '../../../../brand'
 
 export const metadata: Metadata = { title: `Received files · ${brand.name}` }
@@ -59,11 +57,11 @@ export default async function CollectReceivedPage({
   type FileWithUrl = (typeof collect.files)[0] & { downloadUrl?: string }
   const filesWithUrls: FileWithUrl[] = []
   try {
-    const storage = await getStorageClient()
-    const bucket = await getStorageBucket()
     for (const f of collect.files) {
-      const cmd = new GetObjectCommand({ Bucket: bucket, Key: f.key })
-      const url = await getSignedUrl(storage, cmd, { expiresIn: 3600 })
+      const url = await presignDownload(f.key, {
+        filename: f.name,
+        expiresIn: 3600,
+      })
       filesWithUrls.push({ ...f, downloadUrl: url })
     }
   } catch {

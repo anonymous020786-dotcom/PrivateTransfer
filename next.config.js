@@ -17,7 +17,8 @@ function gitSha() {
 const CSP = [
   "default-src 'self'",
   // Next.js inline hydration scripts + Google Tag Manager + reCAPTCHA + Cloudflare Insights
-  "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.google.com https://www.gstatic.com https://static.cloudflareinsights.com",
+  // (dev only: React needs eval() to reconstruct callstacks; never in production)
+  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} https://www.googletagmanager.com https://www.google.com https://www.gstatic.com https://static.cloudflareinsights.com`,
   // MUI emotion CSS-in-JS + Google Fonts
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   // Google Fonts glyphs
@@ -89,9 +90,16 @@ const nextConfig = {
   async headers() {
     return [
       {
-        // Apply security headers to all routes
-        source: '/:path*',
+        // Apply security headers to all routes except the local object store,
+        // which sets its own stricter sandbox CSP for user-uploaded content.
+        source: '/:path((?!api/local-storage).*)',
         headers: securityHeaders,
+      },
+      {
+        source: '/api/local-storage/:path*',
+        headers: securityHeaders.filter(
+          (h) => h.key !== 'Content-Security-Policy',
+        ),
       },
       {
         // Cache static JS/CSS assets aggressively (content-hashed filenames)

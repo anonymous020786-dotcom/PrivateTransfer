@@ -39,6 +39,13 @@ import UploadProgress, {
   FileProgress,
 } from '../../components/transfer/UploadProgress'
 import ShareCard from '../../components/transfer/ShareCard'
+import {
+  hashFile,
+  putWithRetry,
+  uploadMultipart,
+  type MultipartPlan,
+  type UploadedPart,
+} from '../../utils/cloudUpload'
 
 // 200 GB total per transfer (individual files ≤ 5 GB via single presigned PUT)
 const MAX_BYTES = Number(
@@ -144,6 +151,15 @@ export default function TransferPage(): React.ReactElement {
         if (j != null) setCloudTransfersEnabled(j.cloudTransfers !== false)
       })
       .catch(() => setCloudTransfersEnabled(true))
+  }, [])
+
+  // Pre-fill from the OS share sheet (see /share-target and public/sw.js)
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sharedTitle = params.get('title')
+    const sharedText = params.get('text')
+    if (sharedTitle) setTitle(sharedTitle.slice(0, 200))
+    if (sharedText) setMessage(sharedText.slice(0, 1000))
   }, [])
 
   // Pre-fill from duplicate
@@ -394,60 +410,77 @@ export default function TransferPage(): React.ReactElement {
         const json = await createRes.json().catch(() => ({}))
         throw new Error(json.error ?? 'Failed to create transfer.')
       }
-      const { slug, uploadUrls, expiresAt } = await createRes.json()
+      const { slug, uploadUrls, multipart, uploadToken, expiresAt } =
+        await createRes.json()
 
+      const markFile = (i: number, patch: Partial<FileProgress>) =>
+        setFileProgress((prev) => {
+          const next = [...prev]
+          next[i] = { ...next[i], ...patch }
+          return next
+        })
+
+      // Checksums of the original bytes are computed off-thread while the
+      // upload runs, then recorded so recipients can verify integrity.
+      const checksumsPromise = Promise.all(files.map((f) => hashFile(f)))
+
+      const multipartReports: Array<{
+        fileIndex: number
+        parts: UploadedPart[]
+      }> = []
       await Promise.all(
-        files.map(
-          (file, i) =>
-            new Promise<void>((resolve, reject) => {
-              encryptFile(file).then((blob) => {
-                const xhr = new XMLHttpRequest()
-                xhr.open('PUT', uploadUrls[i])
-                xhr.setRequestHeader(
-                  'Content-Type',
-                  encryptFiles
-                    ? 'application/octet-stream'
-                    : file.type || 'application/octet-stream',
-                )
-                xhr.upload.addEventListener('progress', (e) => {
-                  if (e.lengthComputable) onProgress(i, e.loaded)
-                })
-                xhr.addEventListener('load', () => {
-                  if (xhr.status >= 200 && xhr.status < 300) {
-                    onProgress(i, blob.size)
-                    setFileProgress((prev) => {
-                      const next = [...prev]
-                      next[i] = { ...next[i], progress: 100, done: true }
-                      return next
-                    })
-                    resolve()
-                  } else {
-                    setFileProgress((prev) => {
-                      const next = [...prev]
-                      next[i] = { ...next[i], error: true }
-                      return next
-                    })
-                    reject(new Error(`Upload failed for ${file.name}`))
-                  }
-                })
-                xhr.addEventListener('error', () => {
-                  setFileProgress((prev) => {
-                    const next = [...prev]
-                    next[i] = { ...next[i], error: true }
-                    return next
-                  })
-                  reject(new Error(`Network error uploading ${file.name}`))
-                })
-                xhr.send(blob)
-              })
-            }),
-        ),
+        files.map(async (file, i) => {
+          const blob = await encryptFile(file)
+          const contentType = encryptFiles
+            ? 'application/octet-stream'
+            : file.type || 'application/octet-stream'
+          const onRetry = (attempt: number) =>
+            markFile(i, { retrying: attempt })
+          const progress = (loaded: number) => {
+            if (loaded > 0) markFile(i, { retrying: undefined })
+            onProgress(i, loaded)
+          }
+          try {
+            const plan = (multipart as Array<MultipartPlan | null>)?.[i]
+            if (plan) {
+              const parts = await uploadMultipart(blob, plan, progress, onRetry)
+              multipartReports.push({ fileIndex: i, parts })
+            } else {
+              await putWithRetry(
+                uploadUrls[i],
+                blob,
+                contentType,
+                progress,
+                onRetry,
+              )
+            }
+            onProgress(i, blob.size)
+            markFile(i, { progress: 100, done: true, retrying: undefined })
+          } catch (e) {
+            markFile(i, { error: true, retrying: undefined })
+            throw new Error(
+              `Upload failed for ${file.name}: ${(e as Error).message}`,
+              { cause: e },
+            )
+          }
+        }),
       )
+      const checksums = await checksumsPromise
 
       await fetch('/api/transfer/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slug }),
+        body: JSON.stringify({
+          slug,
+          uploadToken,
+          multipart: multipartReports,
+          checksums,
+        }),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}))
+          throw new Error(j.error ?? 'Could not finalise the transfer.')
+        }
       })
 
       setResultSlug(slug)

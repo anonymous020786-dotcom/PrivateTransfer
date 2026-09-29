@@ -8,7 +8,10 @@ import { brand } from '../../brand'
 export const metadata: Metadata = {
   title: 'Blog',
   description: `Guides on private file sharing, security, WebRTC, productivity and web development from the ${brand.name} team.`,
-  alternates: { canonical: '/blog' },
+  alternates: {
+    canonical: '/blog',
+    types: { 'application/rss+xml': '/blog/rss.xml' },
+  },
 }
 
 // DB-backed (editable) — render on demand so new/edited posts appear instantly.

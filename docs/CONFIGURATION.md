@@ -64,3 +64,39 @@ Enable **Google** under Auth → Providers and **TOTP** under Auth → Multi-Fac
 | --- | --- |
 | `NEXT_PUBLIC_GA_ID` | Google Analytics 4 id (`G-XXXX`). Loaded only after cookie consent. |
 | `NEXT_PUBLIC_RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` | reCAPTCHA v3 keys for the contact form. |
+
+## Local backend (zero-service mode)
+
+When Supabase isn't configured, Zync runs a self-contained backend: accounts
+(password, email codes, TOTP 2FA), the small Postgres tables, a Redis-compatible
+store and cloud-transfer storage all live under `.data/` on local disk. It is on
+by default in development; setting real Supabase / R2 / S3 / Redis variables
+always takes precedence, per component.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `NEXT_PUBLIC_LOCAL_BACKEND` | on in dev, off in prod | `true` enables the local backend in production (single-server self-hosting); `false` disables it everywhere. |
+| `ZYNC_DATA_DIR` | `./.data` | Where the local backend keeps `local-db.json`, `redis.json` and uploaded `objects/`. Put it on a persistent volume. |
+| `STORAGE_PROVIDER` | _(auto)_ | `local` forces local-disk storage even when R2/S3 keys exist. Admins can also pick **Local disk** under Admin → Settings → Storage. |
+| `ADMIN_EMAILS` | _(unset)_ | With the local backend and no admin list, the **first registered account** is the super admin. |
+
+With no SMTP configured, one-time sign-in / reset codes are printed to the
+server log.
+
+## Background jobs & webhooks
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ZYNC_INTERNAL_CRON` | on with the local backend | Built-in scheduler (every 5 min): expiry sweeps, scheduled recipient emails, 24 h expiry warnings, pruning abandoned uploads. Set `true` to enable it on any deployment, or `false` if an external cron calls `/api/cron/cleanup`. |
+| `CRON_SECRET` | _(unset)_ | Bearer token accepted by `/api/cron/cleanup` and `/api/cron/scan` from an external scheduler. |
+| `ALLOW_PRIVATE_WEBHOOKS` | `false` in prod | Allow webhook URLs that resolve to private/loopback addresses (always allowed outside production for local testing). |
+
+## Large uploads on R2 / S3
+
+Files over 100 MB are uploaded in parallel parts (multipart). The browser must
+be able to read each part's `ETag`, so the bucket CORS policy needs:
+
+```json
+[{ "AllowedOrigins": ["https://your-domain"], "AllowedMethods": ["PUT", "GET"],
+   "AllowedHeaders": ["*"], "ExposeHeaders": ["ETag"] }]
+```

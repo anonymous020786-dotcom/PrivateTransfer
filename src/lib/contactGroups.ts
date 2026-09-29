@@ -71,7 +71,7 @@ export async function listContactGroups(
   ownerId: string,
 ): Promise<ContactGroup[]> {
   const redis = getRedisClient()
-  const ids = await redis.zrange(USER_KEY(ownerId), 0, -1)
+  const ids = await redis.zrange(USER_KEY(ownerId), '0', '-1')
   if (ids.length === 0) return []
   const groups = await Promise.all(ids.map(getContactGroup))
   return groups.filter((g): g is ContactGroup => g !== null)

@@ -7,26 +7,18 @@ import {
   updateTransfer,
   hashPassword,
   expiryDate,
+  tokenMatches,
 } from '../../../../lib/transfer'
-import { DeleteObjectsCommand } from '@aws-sdk/client-s3'
-import { getR2Client, R2_BUCKET } from '../../../../lib/r2'
+import { recordActivity, requestContext } from '../../../../lib/activity'
+import { deleteStoredObjects } from '../../../../lib/storage'
+import { checkWebhookUrl } from '../../../../lib/webhooks'
 import { getSupabaseServerClient } from '../../../../supabase/server'
 
 export const dynamic = 'force-dynamic'
 
 async function cleanupR2(keys: string[]): Promise<void> {
-  if (keys.length === 0) return
   try {
-    const r2 = getR2Client()
-    await r2.send(
-      new DeleteObjectsCommand({
-        Bucket: R2_BUCKET,
-        Delete: {
-          Objects: keys.map((Key) => ({ Key })),
-          Quiet: true,
-        },
-      }),
-    )
+    await deleteStoredObjects(keys)
   } catch {
     // best-effort
   }
@@ -50,25 +42,51 @@ export async function GET(
     return NextResponse.json({ error: 'Not found.' }, { status: 404 })
   }
 
-  const {
-    files,
-    passwordHash,
-    notifyEmail,
-    notifiedAt,
-    recipientEmails,
-    ...rest
-  } = transfer
+  // Public view: an explicit allow-list, so new record fields are private by
+  // default. Owners additionally see their settings and recipient list.
+  const supabase = await getSupabaseServerClient()
+  const user = supabase ? (await supabase.auth.getUser()).data.user : null
+  const isOwner = !!transfer.ownerId && transfer.ownerId === user?.id
   return NextResponse.json({
-    ...rest,
-    passwordProtected: !!passwordHash,
-    files: files.map(({ name, size, type, path }) => ({
+    slug: transfer.slug,
+    title: transfer.title,
+    message: transfer.message,
+    senderName: transfer.senderName,
+    totalSize: transfer.totalSize,
+    createdAt: transfer.createdAt,
+    expiresAt: transfer.expiresAt,
+    completed: transfer.completed,
+    encrypted: transfer.encrypted,
+    burnAfterRead: transfer.burnAfterRead,
+    maxDownloads: transfer.maxDownloads,
+    downloadCount: transfer.downloadCount,
+    passwordProtected: !!transfer.passwordHash,
+    passwordHint: transfer.passwordHint,
+    background: transfer.background,
+    logoUrl: transfer.logoUrl,
+    backgroundImageUrl: transfer.backgroundImageUrl,
+    scanStatus: transfer.scanStatus,
+    files: transfer.files.map(({ name, size, type, path, sha256 }) => ({
       name,
       size,
       type,
       ...(path ? { path } : {}),
+      ...(sha256 ? { sha256 } : {}),
     })),
+    ...(isOwner
+      ? {
+          owner: true,
+          recipientEmails: transfer.recipientEmails,
+          notifyEmail: transfer.notifyEmail,
+          notifyEveryDownload: transfer.notifyEveryDownload,
+          webhookUrl: transfer.webhookUrl,
+          slackWebhookUrl: transfer.slackWebhookUrl,
+          pageViewCount: transfer.pageViewCount,
+          emailOpenCount: transfer.emailOpenCount,
+          scheduledAt: transfer.scheduledAt,
+        }
+      : {}),
   })
-  // Note: burnAfterRead is included in ...rest so recipients can see the warning
 }
 
 export async function DELETE(
@@ -82,7 +100,16 @@ export async function DELETE(
 
   const supabase = await getSupabaseServerClient()
   const user = supabase ? (await supabase.auth.getUser()).data.user : null
-  if (transfer.ownerId && transfer.ownerId !== user?.id)
+  // Owners delete with their session. Guest transfers have no owner, so the
+  // creator proves authorship with the secret upload token from create.
+  const token =
+    req.headers.get('x-upload-token') ??
+    req.nextUrl.searchParams.get('token') ??
+    undefined
+  const allowed = transfer.ownerId
+    ? transfer.ownerId === user?.id
+    : tokenMatches(token, transfer.uploadTokenHash)
+  if (!allowed)
     return NextResponse.json({ error: 'Forbidden.' }, { status: 403 })
 
   await cleanupR2(transfer.files.map((f) => f.key))
@@ -90,6 +117,10 @@ export async function DELETE(
 
   if (transfer.ownerId) {
     void removeUserTransferIndex(transfer.ownerId, slug)
+    void recordActivity(transfer.ownerId, 'transfer.deleted', {
+      ...requestContext(req),
+      detail: transfer.title || slug,
+    })
   }
 
   return NextResponse.json({ ok: true })
@@ -148,6 +179,10 @@ export async function PATCH(
   if (notifyEmail !== undefined) patch.notifyEmail = notifyEmail || null
   if (notifyEveryDownload !== undefined)
     patch.notifyEveryDownload = notifyEveryDownload
+  if (webhookUrl) {
+    const problem = await checkWebhookUrl(webhookUrl)
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 })
+  }
   if (webhookUrl !== undefined) patch.webhookUrl = webhookUrl || null
 
   if (clearPassword) {

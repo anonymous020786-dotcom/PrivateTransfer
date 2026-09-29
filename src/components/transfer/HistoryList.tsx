@@ -42,6 +42,8 @@ import DownloadIcon from '@mui/icons-material/Download'
 import Checkbox from '@mui/material/Checkbox'
 import InputAdornment from '@mui/material/InputAdornment'
 import SearchIcon from '@mui/icons-material/Search'
+import PushPinIcon from '@mui/icons-material/PushPin'
+import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined'
 
 type TransferSummary = {
   slug: string
@@ -467,6 +469,7 @@ export default function HistoryList(): React.ReactElement {
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = React.useState(false)
   const [search, setSearch] = React.useState('')
+  const [pins, setPins] = React.useState<Set<string>>(new Set())
   const [statusFilter, setStatusFilter] = React.useState<
     'all' | 'active' | 'expiring'
   >('all')
@@ -488,6 +491,10 @@ export default function HistoryList(): React.ReactElement {
       })
       .then(setTransfers)
       .catch((e) => setError(e.message))
+    fetch('/api/transfer/pins')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j?.pins && setPins(new Set(j.pins)))
+      .catch(() => {})
     fetch('/api/transfer/storage')
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
@@ -501,6 +508,31 @@ export default function HistoryList(): React.ReactElement {
       })
       .catch(() => {})
   }, [])
+
+  const togglePin = async (slug: string) => {
+    const pinned = !pins.has(slug)
+    setPins((prev) => {
+      const next = new Set(prev)
+      if (pinned) next.add(slug)
+      else next.delete(slug)
+      return next
+    })
+    const res = await fetch('/api/transfer/pins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug, pinned }),
+    }).catch(() => null)
+    const json = await res?.json().catch(() => null)
+    if (!res?.ok) {
+      setSnackbar(json?.error ?? 'Could not update pin.')
+      setPins((prev) => {
+        const next = new Set(prev)
+        if (pinned) next.delete(slug)
+        else next.add(slug)
+        return next
+      })
+    }
+  }
 
   const copyLink = async (slug: string) => {
     try {
@@ -616,8 +648,11 @@ export default function HistoryList(): React.ReactElement {
     if (workspaceFilter !== 'all') {
       list = list.filter((t) => t.workspaceId === workspaceFilter)
     }
-    return list
-  }, [transfers, search, statusFilter, workspaceFilter])
+    // Pinned first; the sort is stable so each group keeps its order.
+    return [...list].sort(
+      (a, b) => Number(pins.has(b.slug)) - Number(pins.has(a.slug)),
+    )
+  }, [transfers, search, statusFilter, workspaceFilter, pins])
 
   const MAX_STORAGE_BYTES = 200 * 1024 * 1024 * 1024 // 200 GB display cap
 
@@ -862,6 +897,21 @@ export default function HistoryList(): React.ReactElement {
                         spacing={0.5}
                         sx={{ flexShrink: 0 }}
                       >
+                        <Tooltip
+                          title={pins.has(t.slug) ? 'Unpin' : 'Pin to top'}
+                        >
+                          <IconButton
+                            size="small"
+                            onClick={() => togglePin(t.slug)}
+                            color={pins.has(t.slug) ? 'primary' : 'default'}
+                          >
+                            {pins.has(t.slug) ? (
+                              <PushPinIcon fontSize="small" />
+                            ) : (
+                              <PushPinOutlinedIcon fontSize="small" />
+                            )}
+                          </IconButton>
+                        </Tooltip>
                         <Tooltip title="Open download page">
                           <IconButton
                             size="small"

@@ -47,7 +47,7 @@ const PatchSchema = z.object({
   smtp_user: z.string().max(200).optional(),
   smtp_pass: z.string().max(200).optional(),
   smtp_from: z.string().max(200).optional(),
-  storage_provider: z.enum(['r2', 's3']).optional(),
+  storage_provider: z.enum(['r2', 's3', 'local']).optional(),
   r2_account_id: z.string().max(200).optional(),
   r2_access_key_id: z.string().max(200).optional(),
   r2_secret_access_key: z.string().max(200).optional(),

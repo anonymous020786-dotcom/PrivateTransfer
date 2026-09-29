@@ -40,6 +40,17 @@ export default async function proxy(
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!supabaseUrl || !supabaseKey) {
+      // Local backend: the signed session cookie is fully verified by the page
+      // and API handlers; here we only redirect visitors who have none.
+      const localBackend =
+        process.env.NEXT_PUBLIC_LOCAL_BACKEND === 'true' ||
+        (process.env.NEXT_PUBLIC_LOCAL_BACKEND !== 'false' &&
+          process.env.NODE_ENV !== 'production')
+      if (localBackend && !request.cookies.get('zync_local_session')) {
+        const loginUrl = new URL('/login', request.nextUrl.origin)
+        loginUrl.searchParams.set('next', pathname)
+        return NextResponse.redirect(loginUrl)
+      }
       response = NextResponse.next()
     } else {
       response = NextResponse.next({ request })
@@ -88,8 +99,10 @@ export default async function proxy(
   return response
 }
 
+// /api/local-storage and /api/v1/upload stream upload bodies of any size; running the proxy on them
+// would buffer (and cap at 10 MB) every request body, so it is excluded.
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf|eot|map)).*)',
+    '/((?!_next/static|api/local-storage|api/v1/upload|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|otf|eot|map)).*)',
   ],
 }
