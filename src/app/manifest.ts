@@ -64,10 +64,18 @@ export default function manifest(): MetadataRoute.Manifest {
       },
     ],
     screenshots: [],
+    // Receives files from the OS share sheet; public/sw.js stashes them and
+    // hands them to the transfer page.
     share_target: {
-      action: '/transfer',
-      method: 'GET',
-      params: { title: 'title', text: 'text', url: 'url' },
+      action: '/share-target',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: {
+        title: 'title',
+        text: 'text',
+        url: 'url',
+        files: [{ name: 'files', accept: ['*/*'] }],
+      },
     },
     protocol_handlers: [],
     prefer_related_applications: false,

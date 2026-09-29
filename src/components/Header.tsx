@@ -27,6 +27,7 @@ const NAV: Array<{ label: string; href: string }> = [
   { label: 'Transfer', href: '/transfer' },
   { label: 'My Transfers', href: '/transfer/history' },
   { label: 'Collect', href: '/collect' },
+  { label: 'Paste', href: '/paste' },
   { label: 'Boards', href: '/boards' },
   { label: 'Workspaces', href: '/workspaces' },
   { label: 'Tools', href: '/tools' },

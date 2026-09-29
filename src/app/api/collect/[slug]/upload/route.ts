@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { PutObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { getCollect } from '../../../../../lib/collect'
-import {
-  getStorageClient,
-  getStorageBucket,
-  getStorageClass,
-  isStorageConfigured,
-} from '../../../../../lib/storage'
+import { isStorageConfigured, presignUpload } from '../../../../../lib/storage'
 import { rateLimit, getClientIp } from '../../../../../rateLimit'
 
 export const dynamic = 'force-dynamic'
@@ -78,23 +71,16 @@ export async function POST(
     )
   const filesToUpload = body.data.files.slice(0, remaining)
 
-  const storage = await getStorageClient()
-  const bucket = await getStorageBucket()
-  const storageClass = await getStorageClass()
-
   const uploadUrls: string[] = []
   const fileKeys: string[] = []
 
   for (const f of filesToUpload) {
     const key = `collect/${slug}/${crypto.randomUUID()}_${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-    const cmd = new PutObjectCommand({
-      Bucket: bucket,
-      Key: key,
-      ContentType: f.type || 'application/octet-stream',
-      ContentLength: f.size,
-      ...(storageClass ? { StorageClass: storageClass } : {}),
+    const url = await presignUpload(key, {
+      contentType: f.type,
+      size: f.size,
+      expiresIn: 14400,
     })
-    const url = await getSignedUrl(storage, cmd, { expiresIn: 14400 })
     uploadUrls.push(url)
     fileKeys.push(key)
   }

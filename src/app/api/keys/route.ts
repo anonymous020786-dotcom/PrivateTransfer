@@ -8,6 +8,8 @@ import {
   hashApiKey,
 } from '../../../lib/apiKeys'
 
+import { recordActivity, requestContext } from '../../../lib/activity'
+
 export const dynamic = 'force-dynamic'
 
 export async function GET(): Promise<NextResponse> {
@@ -60,6 +62,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     lastUsedAt: null,
   }
   await saveApiKey(record)
+  void recordActivity(user.id, 'apikey.created', {
+    ...requestContext(req),
+    detail: record.name,
+  })
 
   // Return the raw key ONCE — never retrievable again
   return NextResponse.json(

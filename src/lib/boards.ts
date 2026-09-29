@@ -83,7 +83,7 @@ export async function deleteBoard(id: string, ownerId: string): Promise<void> {
 
 export async function listUserBoards(ownerId: string): Promise<BoardRecord[]> {
   const redis = getRedisClient()
-  const ids = await redis.zrange(USER_KEY(ownerId), 0, -1)
+  const ids = await redis.zrange(USER_KEY(ownerId), '0', '-1')
   if (ids.length === 0) return []
   const boards = await Promise.all(ids.map(getBoard))
   return boards.filter((b): b is BoardRecord => b !== null)

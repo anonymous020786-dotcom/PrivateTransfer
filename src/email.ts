@@ -1,5 +1,5 @@
 import 'server-only'
-import nodemailer from 'nodemailer'
+import nodemailer, { type Transporter } from 'nodemailer'
 import { brand } from './brand'
 import { getAdminEmails } from './supabase/config'
 import { getAllSettings, isFeatureEnabled } from './lib/appSettings'
@@ -61,10 +61,10 @@ export async function isEmailConfigured(): Promise<boolean> {
 // We don't cache it indefinitely to ensure fresh credentials are always used.
 let _transporter: {
   config: SmtpConfig
-  transport: nodemailer.Transporter
+  transport: Transporter
 } | null = null
 
-async function getTransporter(): Promise<nodemailer.Transporter | null> {
+async function getTransporter(): Promise<Transporter | null> {
   const cfg = await getSmtpConfig()
   if (!cfg) return null
 

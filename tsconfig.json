@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    "target": "ES2017",
     "lib": [
       "dom",
       "dom.iterable",
@@ -16,7 +16,6 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "downlevelIteration": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
@@ -27,7 +26,7 @@
     "strictNullChecks": true,
     "types": [
       "vitest/globals",
-      "@testing-library/jest-dom"
+      "@testing-library/jest-dom/vitest"
     ]
   },
   "include": [

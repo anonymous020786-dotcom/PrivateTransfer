@@ -1,8 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { getTransfer, updateTransfer } from '../../../../lib/transfer'
-import { getStorageClient, getStorageBucket } from '../../../../lib/storage'
-import { GetObjectCommand } from '@aws-sdk/client-s3'
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { isCronAuthorized } from '../../../../lib/cronAuth'
+import { getStorageProvider, presignDownload } from '../../../../lib/storage'
 import {
   dequeueScanBatch,
   submitUrlToVirusTotal,
@@ -19,16 +18,8 @@ const MAX_POLL_ATTEMPTS = 12
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const secret = process.env.CRON_SECRET
-  if (!secret)
-    return NextResponse.json(
-      { error: 'CRON_SECRET not configured.' },
-      { status: 503 },
-    )
-
-  const auth = req.headers.get('authorization')
-  if (auth !== `Bearer ${secret}`)
-    return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 })
+  const auth = isCronAuthorized(req)
+  if (auth !== true) return auth
 
   const enabled = await isFeatureEnabled('feature_virus_scan', false)
   if (!enabled)
@@ -90,14 +81,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         continue
       }
 
-      const storage = await getStorageClient()
-      const bucket = await getStorageBucket()
+      // VirusTotal fetches the file itself, so it needs a publicly reachable
+      // URL — local-disk objects live behind this server and can't be scanned.
+      if ((await getStorageProvider()) === 'local') {
+        await updateTransfer(slug, { scanStatus: 'skipped' })
+        continue
+      }
       const file = t.files[0]
-      const url = await getSignedUrl(
-        storage,
-        new GetObjectCommand({ Bucket: bucket, Key: file.key }),
-        { expiresIn: 300 },
-      )
+      const url = await presignDownload(file.key, { expiresIn: 300 })
 
       await updateTransfer(slug, { scanStatus: 'scanning' })
       const analysisId = await submitUrlToVirusTotal(apiKey, url, file.name)

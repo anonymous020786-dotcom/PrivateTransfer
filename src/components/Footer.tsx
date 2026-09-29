@@ -26,6 +26,7 @@ const COLUMNS: Array<{
     links: [
       { label: 'Send a file', href: '/send' },
       { label: 'Transfer files', href: '/transfer' },
+      { label: 'Share text & code', href: '/paste' },
       { label: 'Free tools', href: '/tools' },
       { label: 'Features', href: '/#features' },
       { label: 'Welcome', href: '/welcome' },
@@ -37,6 +38,8 @@ const COLUMNS: Array<{
     links: [
       { label: 'About', href: '/about' },
       { label: 'Blog', href: '/blog' },
+      { label: 'Developers & API', href: '/developers' },
+      { label: 'System status', href: '/status' },
       { label: 'Contact', href: '/contact' },
     ],
   },

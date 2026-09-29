@@ -288,8 +288,49 @@ function SignInForm({ next }: { next: string }): React.ReactElement {
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [info, setInfo] = React.useState<string | null>(null)
+  // Second step for accounts with TOTP 2FA: the first factor yields an aal1
+  // session that must be stepped up to aal2 before we continue.
+  const [mfaFactorId, setMfaFactorId] = React.useState<string | null>(null)
+  const [mfaCode, setMfaCode] = React.useState('')
 
   const go = () => (window.location.href = next)
+
+  // After the first factor succeeds, either finish or ask for the TOTP code.
+  const afterFirstFactor = async () => {
+    const { data: aal } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+    if (aal?.nextLevel === 'aal2' && aal.currentLevel !== 'aal2') {
+      const { data } = await supabase.auth.mfa.listFactors()
+      const factor = data?.totp?.[0]
+      if (factor) {
+        setMfaFactorId(factor.id)
+        setInfo('Enter the 6-digit code from your authenticator app.')
+        return
+      }
+    }
+    go()
+  }
+
+  const verifyMfa = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!mfaFactorId) return
+    setBusy(true)
+    setError(null)
+    const ch = await supabase.auth.mfa.challenge({ factorId: mfaFactorId })
+    if (ch.error) {
+      setBusy(false)
+      setError(ch.error.message)
+      return
+    }
+    const v = await supabase.auth.mfa.verify({
+      factorId: mfaFactorId,
+      challengeId: ch.data.id,
+      code: mfaCode.trim(),
+    })
+    setBusy(false)
+    if (v.error) setError(v.error.message)
+    else go()
+  }
 
   const passwordSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -302,7 +343,7 @@ function SignInForm({ next }: { next: string }): React.ReactElement {
     })
     setBusy(false)
     if (error) setError(error.message)
-    else go()
+    else await afterFirstFactor()
   }
 
   const sendOtp = async () => {
@@ -334,7 +375,49 @@ function SignInForm({ next }: { next: string }): React.ReactElement {
     })
     setBusy(false)
     if (error) setError(error.message)
-    else go()
+    else await afterFirstFactor()
+  }
+
+  if (mfaFactorId) {
+    return (
+      <Box component="form" onSubmit={verifyMfa}>
+        <Stack spacing={2}>
+          {error && <Alert severity="error">{error}</Alert>}
+          {info && <Alert severity="info">{info}</Alert>}
+          <TextField
+            label="Authentication code"
+            value={mfaCode}
+            onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+            autoFocus
+            autoComplete="one-time-code"
+            slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 6 } }}
+            fullWidth
+          />
+          <Button
+            type="submit"
+            variant="contained"
+            size="large"
+            disabled={busy || mfaCode.length !== 6}
+          >
+            {busy ? <CircularProgress size={22} /> : 'Verify'}
+          </Button>
+          <Link
+            component="button"
+            type="button"
+            variant="body2"
+            onClick={async () => {
+              await supabase.auth.signOut()
+              setMfaFactorId(null)
+              setMfaCode('')
+              setInfo(null)
+              setError(null)
+            }}
+          >
+            Cancel and sign in as someone else
+          </Link>
+        </Stack>
+      </Box>
+    )
   }
 
   return (

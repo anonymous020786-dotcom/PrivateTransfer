@@ -15,6 +15,7 @@ export type FileProgress = {
   progress: number // 0–100
   done: boolean
   error: boolean
+  retrying?: number // attempt number while an automatic retry is pending
 }
 
 type Props = {
@@ -94,7 +95,9 @@ export default function UploadProgress({
                   ? 'Done'
                   : f.error
                     ? 'Failed'
-                    : `${Math.round(f.progress)}%`}
+                    : f.retrying
+                      ? `Connection issue — retrying (${f.retrying})…`
+                      : `${Math.round(f.progress)}%`}
               </Typography>
             </Stack>
             <LinearProgress

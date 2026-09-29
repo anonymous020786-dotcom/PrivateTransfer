@@ -19,6 +19,8 @@ import FolderIcon from '@mui/icons-material/Folder'
 import AddIcon from '@mui/icons-material/Add'
 import AutorenewIcon from '@mui/icons-material/Autorenew'
 import TextField from '@mui/material/TextField'
+import WebhookIcon from '@mui/icons-material/Webhook'
+import WebhookDialog from './WebhookDialog'
 
 type Board = { id: string; name: string; slugs: string[] }
 
@@ -39,6 +41,7 @@ export default function OwnerActions({
   const [boardsLoading, setBoardsLoading] = React.useState(false)
   const [selectedBoard, setSelectedBoard] = React.useState('')
   const [addingToBoard, setAddingToBoard] = React.useState(false)
+  const [webhooksOpen, setWebhooksOpen] = React.useState(false)
 
   const resendEmails = async () => {
     setResending(true)
@@ -159,7 +162,21 @@ export default function OwnerActions({
           onClick={openBoardDialog}
           clickable
         />
+        <Chip
+          icon={<WebhookIcon />}
+          label="Webhooks"
+          size="small"
+          variant="outlined"
+          onClick={() => setWebhooksOpen(true)}
+          clickable
+        />
       </Stack>
+
+      <WebhookDialog
+        slug={slug}
+        open={webhooksOpen}
+        onClose={() => setWebhooksOpen(false)}
+      />
 
       {/* Renew dialog */}
       <Dialog

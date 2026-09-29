@@ -6,3 +6,6 @@ tsconfig.tsbuildinfo
 .env
 # Recreated by newer pnpm locally; approvals live in package.json (pnpm.onlyBuiltDependencies)
 pnpm-workspace.yaml
+
+# Local backend data (accounts, embedded Redis snapshot, uploaded objects)
+.data

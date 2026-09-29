@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from '../../../../supabase/server'
 import { getSupabaseAdminClient } from '../../../../supabase/admin'
 import { sendMailBg, notifyAdmins } from '../../../../email'
 import { tplAccountDeleted, tplCriticalAlert } from '../../../../emailTemplates'
+import { purgeUserData } from '../../../../lib/accountPurge'
 
 // Permanently deletes the signed-in user's account. Requires the service-role
 // key (server-only). The user must be authenticated; they can only delete
@@ -36,6 +37,9 @@ export async function POST(): Promise<NextResponse> {
   const name =
     meta.full_name || meta.name || (email ? email.split('@')[0] : 'there')
 
+  // Erase stored data first so nothing is orphaned if the auth delete fails
+  // half-way; the auth user is removed last.
+  await purgeUserData(user.id)
   const { error } = await admin.auth.admin.deleteUser(user.id)
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })

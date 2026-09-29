@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { getTransfer, hashPassword } from '../../../../../lib/transfer'
+import {
+  getTransfer,
+  verifyTransferPassword,
+} from '../../../../../lib/transfer'
 import { rateLimit, getClientIp } from '../../../../../rateLimit'
 import { tooManyRequests, ok, err } from '../../../../../lib/apiResponse'
 
@@ -29,7 +32,10 @@ export async function POST(
   if (!transfer || !transfer.completed || !transfer.passwordHash)
     return err('Not found.', { status: 404 })
 
-  const valid = hashPassword(body.data.password) === transfer.passwordHash
+  const valid = verifyTransferPassword(
+    body.data.password,
+    transfer.passwordHash,
+  )
 
   // On failure: return the same response shape regardless (no oracle for slug existence)
   return ok({ valid }, { rl })
